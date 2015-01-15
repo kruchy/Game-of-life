@@ -17,15 +17,18 @@ getFromCenter(Board,X,Y) -> case checkXY(Board#board.width,Board#board.height,X,
 							end.
 
 
+
+
+
 set( X, Y, Value, Array ) ->
 	Y_array = array:get( X, Array ),
 	New_y_array = array:set( Y, Value, Y_array ),
 	array:set( X, New_y_array, Array ).
 
 
-size(Board) -> io:fwrite("~p ~p ~n",[Board#board.height,Board#board.width]).
-seq(Board) -> lists:seq(1,Board#board.width-2).
-startGame(W,H)->
+
+startGame(_,_,Alive) when length(Alive) =:= 0 -> throw('empty board');
+startGame(W,H,Alive)->
 	Board = createBoard(W,H),
 	initBoard(Board),
 	Frame = view:initFrame(W,H),
@@ -33,26 +36,34 @@ startGame(W,H)->
 		true -> ok;
 		false -> register(frame,spawn(view,loop,[Frame,W,H,0]))
 	end,
-
+	setAlive(Board,Alive),
+	frame ! {draw},
 	spawn(?MODULE,next,[Board]).
 
+setAlive(_,[]) -> ok;
+setAlive(Board, [{X,Y}]) -> getA(Board,X,Y)! {set,alive}; 
+setAlive(Board,[{X,Y}|Rest]) -> getA(Board,X,Y) ! {set,alive}, setAlive(Board,Rest). 
 
 next(Board)->
 	receive 
-		after 100 -> nextIteration(Board)
+		after 500 -> nextIteration(Board)
 	end,
-	frame ! {draw},
+	%frame ! {draw},
 	next(Board).
 
 sendNext(Pid) -> Pid ! {next}.
 
 nextIteration(Board) ->
-	[ [ sendNext(getA(Board,X,Y)) || Y <- lists:seq(1,Board#board.height-2) ] || X <- lists:seq(1,Board#board.width-2)].
+	[ [ sendNext(getA(Board,X,Y)) || Y <- lists:seq(0,Board#board.height-1) ] || X <- lists:seq(0,Board#board.width-1)].
+
+
+writeSmt(W,H) -> [ [ io:format("~p ~p~n",[X,Y]) || Y <- lists:seq(0,H-1) ] || X <- lists:seq(0,W-1)].
+
 
 createBoard(Width,Height)->
 	#board{area = createArea(Width,Height),width = Width, height = Height}.
 
-createArea(Width,Height) when Height < 3 orelse Width < 3 -> throw('invalid size');
+createArea(Width,Height) when Height < 3 , Width < 3 -> throw('invalid size');
 createArea(Width,Height) -> 
 	Table = [[ create_cell(X,Y) || Y <- lists:seq(0,Height-1)] || X <- lists:seq(0,Width - 1)],
 	array:map(fun(_,Value) -> array:from_list(Value) end,array:from_list(Table)).
@@ -61,20 +72,22 @@ drawBoard(Board)->
 	New = [array:to_list(L) || L <- array:to_list(Board) ],
 	lists:foreach(fun(A) -> io:format("~p~n",[A]) end,New).
 
+glider()-> [{5,4},{3,5},{5,5},{4,6},{5,6}].
+
 
 initBoard(Board) -> 
 	[[ 
 		getA(Board,X,Y) ! {init,
-			[getA(Board,X-1,Y-1),
-			getA(Board,X-1,Y),
-			getA(Board,X-1,Y+1),
-			getA(Board,X,Y-1),
-			getA(Board,X,Y+1),
-			getA(Board,X+1,Y-1),
-			getA(Board,X+1,Y),
-			getA(Board,X+1,Y+1)
+			[getFromCenter(Board,X-1,Y-1),
+			getFromCenter(Board,X-1,Y),
+			getFromCenter(Board,X-1,Y+1),
+			getFromCenter(Board,X,Y-1),
+			getFromCenter(Board,X,Y+1),
+			getFromCenter(Board,X+1,Y-1),
+			getFromCenter(Board,X+1,Y),
+			getFromCenter(Board,X+1,Y+1)
 			]} || 
-			Y <- lists:seq(1,Board#board.height-2) ] || X <- lists:seq(1,Board#board.width-2)].
+			Y <- lists:seq(0,Board#board.height-1) ] || X <- lists:seq(0,Board#board.width-1)].
 
 
 create_cell(X,Y) ->
@@ -84,21 +97,26 @@ cell(X,Y,State,Neighbors,Living,Received) ->
 	receive
 		{init,NewN} -> cell(X,Y,State,NewN,0,0);
 		
-		{state,dead} -> case Received =:= length(Neighbors) of		
-							true ->  cell(X,Y,determineState(State,Living),Neighbors,0,0);
-							false -> cell(X,Y,State,Neighbors,Living,Received + 1)
+		{set,NewS} -> frame ! {update,X,Y,NewS} ,cell(X,Y,NewS,Neighbors,Living,Received);
+
+		{state,dead} -> case Received  of		
+							7 ->  NewS = determineState(State,Living), 
+									 frame ! {update,X,Y,NewS},
+									 cell(X,Y,NewS,Neighbors,0,0);
+							_ -> cell(X,Y,State,Neighbors,Living,Received + 1)
 						end;
 		
-		{state,alive} -> case Received =:= length(Neighbors) of
-							true ->  cell(X,Y,determineState(State,Living + 1),Neighbors,0,0);
-							false -> cell(X,Y,State,Neighbors,Living + 1,Received + 1)
+		{state,alive} -> case Received  of
+							7 ->  NewS = determineState(State,Living+1),
+									 frame ! {update,X,Y,NewS}, 
+									 cell(X,Y,NewS,Neighbors,0,0);
+							_ -> cell(X,Y,State,Neighbors,Living + 1,Received + 1)
 						end;
 		{debug} -> io:format("~p ~p ~p ~p ~p ~p~n",[X,Y,State,Neighbors,Living,Received]),
 		cell(X,Y,State,Neighbors,Living,Received); 
 
 		{next} -> 
 					sendState(Neighbors,State),
-					frame ! {update,X,Y,State},
 					cell(X,Y,State,Neighbors,Living,Received)
 	end.
  
@@ -114,7 +132,6 @@ determineState(dead,Living) ->
 		false -> dead
 	end. 
 
-sendState([],_) -> ok;
-sendState([A],State) -> A ! {state,State};
-sendState([First|Rest],State) -> First ! {state,State}, sendState(Rest,State).
-
+sendState(Neighbors,State) -> lists:foreach(fun(Pid) -> sendHelper(Pid,State) end,Neighbors).
+sendHelper(none,_) -> ok;
+sendHelper(Pid,State) -> Pid ! {state,State}.
