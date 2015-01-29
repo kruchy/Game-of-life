@@ -7,7 +7,8 @@
 -define(KEEP_ALIVE, [2, 3]).
 
 -record(board,
-	{area, width, height}).%% Author : Krzysztof Misiak
+	{area, width,
+	 height}).%% Author : Krzysztof Misiak
 
 % Demonstration purposes only if board is bigger than 5x5
 

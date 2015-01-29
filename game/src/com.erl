@@ -21,9 +21,9 @@ start(Width, % first dimension
     end,
     case lists:member(com, registered()) of
       true -> ok;
-      false ->
-	  register(com,spawn_link(?MODULE,loop,[])) end,
-	spawn_link(game, startGame, [Width, Height, Alive]).
+      false -> register(com, spawn_link(?MODULE, loop, []))
+    end,
+    spawn_link(game, startGame, [Width, Height, Alive]).
 
 %%main loop, receives messages from the model and passes them to the view module
 
